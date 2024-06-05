@@ -251,8 +251,22 @@ V4L2Frame::~V4L2Frame() {
 }
 
 int V4L2Frame::getData(uint8_t** outData, size_t* dataSize) {
+    ALOGI("%s: Shiva inside getData", __FUNCTION__);
+    if(*outData == nullptr) {
+        ALOGI("%s: Shiva outData is null", __FUNCTION__);
+    }
+    
     return map(outData, dataSize);
 }
+
+int V4L2Frame::getRemoteData(uint8_t** outData, size_t* dataSize) {
+    ALOGI("%s: Shiva inside getRemoteData", __FUNCTION__);
+    *outData = mData;
+    *dataSize = mDataSize;
+    //return map(outData, dataSize);
+    return 0;
+}
+
 
 int V4L2Frame::map(uint8_t** data, size_t* dataSize) {
     if (data == nullptr || dataSize == nullptr) {
@@ -273,7 +287,7 @@ int V4L2Frame::map(uint8_t** data, size_t* dataSize) {
     }
     *data = mData;
     *dataSize = mDataSize;
-    ALOGV("%s: V4L map FD %d, data %p size %zu", __FUNCTION__, mFd, mData, mDataSize);
+    ALOGE("%s: V4L map FD %d, data %p size %zu", __FUNCTION__, mFd, mData, mDataSize);
     return 0;
 }
 
@@ -301,6 +315,11 @@ int AllocatedFrame::getData(uint8_t** outData, size_t* dataSize) {
     }
     *outData = mData.data();
     *dataSize = mBufferSize;
+    return 0;
+}
+
+int AllocatedFrame::getRemoteData(uint8_t** outData, size_t* dataSize) {
+    ALOGI("%p and %p", outData, dataSize);
     return 0;
 }
 
@@ -850,6 +869,12 @@ int AllocatedV4L2Frame::getData(uint8_t** outData, size_t* dataSize) {
 
     *outData = mData.data();
     *dataSize = mData.size();
+    return 0;
+}
+
+
+int AllocatedV4L2Frame::getRemoteData(uint8_t** outData, size_t* dataSize) {
+    ALOGI("%p and %p", outData, dataSize);
     return 0;
 }
 
