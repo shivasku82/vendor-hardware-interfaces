@@ -185,6 +185,199 @@ ExternalCameraConfig ExternalCameraConfig::loadFromCfg(const char* cfgPath) {
     return ret;
 }
 
+const char* ExternalCameraConfig::kRemoteCfgPath = "/vendor/etc/remote_camera_config.xml";
+
+ExternalCameraConfig ExternalCameraConfig::loadFromRemoteCfg(const char* cfgPath) {
+    using namespace tinyxml2;
+    ExternalCameraConfig ret;
+
+    XMLDocument configXml;
+    XMLError err = configXml.LoadFile(cfgPath);
+    if (err != XML_SUCCESS) {
+        ALOGE("%s: Unable to load remote camera config file '%s'. Error: %s", __FUNCTION__,
+              cfgPath, XMLDocument::ErrorIDToName(err));
+        return ret;
+    } else {
+        ALOGI("%s: load remote camera config succeeded!", __FUNCTION__);
+    }
+
+    XMLElement* remCam = configXml.FirstChildElement("RemoteCamera");
+    if (remCam == nullptr) {
+        ALOGI("%s: no external camera config specified", __FUNCTION__);
+        return ret;
+    }
+
+    XMLElement* providerCfg = remCam->FirstChildElement("Provider");
+    if (providerCfg == nullptr) {
+        ALOGI("%s: no external camera provider config specified", __FUNCTION__);
+        return ret;
+    }
+
+    XMLElement* cameraIdOffset = providerCfg->FirstChildElement("CameraIdOffset");
+    if (cameraIdOffset != nullptr) {
+        ret.cameraIdOffset = std::atoi(cameraIdOffset->GetText());
+    }
+
+    XMLElement* ignore = providerCfg->FirstChildElement("ignore");
+    if (ignore == nullptr) {
+        ALOGI("%s: no internal ignored device specified", __FUNCTION__);
+        return ret;
+    }
+
+    XMLElement* deviceCfg = remCam->FirstChildElement("Device");
+    if (deviceCfg == nullptr) {
+        ALOGI("%s: no external camera device config specified", __FUNCTION__);
+        return ret;
+    }
+
+    XMLElement* path = deviceCfg->FirstChildElement("Path");
+    if(path != nullptr) {
+        std::string p(path->GetText());
+        ret.pathCam = p; //apple
+    }
+
+    XMLElement* numVideoBuf = deviceCfg->FirstChildElement("NumVideoBuffers");
+    if(numVideoBuf == nullptr) {
+        ALOGI("%s: no video buffers specified", __FUNCTION__);
+    }
+    else {
+        ret.numVideoBuffers = numVideoBuf->UnsignedAttribute("count", /*Default*/ kDefaultNumVideoBuffer);//apple
+    }
+
+    XMLElement* numStillBuf = deviceCfg->FirstChildElement("NumStillBuffers");
+    if (numStillBuf == nullptr) {
+        ALOGI("%s: no num Still buffers specified", __FUNCTION__);
+    } else {
+        ret.numStillBuffers =
+                numStillBuf->UnsignedAttribute("count", /*Default*/ kDefaultNumStillBuffer);
+    }
+
+    XMLElement* defau = deviceCfg->FirstChildElement("Default");
+    if (defau == nullptr) {
+        ALOGI("%s: no default size buffers specified", __FUNCTION__);
+    } else {
+        
+        ret.defaultWidth = defau->IntAttribute("width", /*Default*/ 0);
+        ret.defaultHeight = defau->IntAttribute("height", /*Default*/ 0);
+    }
+    
+    //vector<vector<int>> frameSizes;
+    XMLElement* settings = deviceCfg->FirstChildElement("Setting");
+    while(settings!=nullptr) {
+        auto w = settings->IntAttribute("width", 0);
+        auto h = settings->IntAttribute("height", 0);
+        //frameSizes.push_back({w,h});
+        ret.frames.push_back({w,h}); // apple
+        settings = settings->NextSiblingElement();
+    }
+
+    XMLElement* streamId = deviceCfg->FirstChildElement("StreamId");
+    if(streamId == nullptr) {
+        ALOGI("%s: no StreamId specified", __FUNCTION__);
+    }
+    else {
+        ret.streamId = std::atoi(streamId->GetText()); // apple
+    }
+
+    XMLElement* partialResult = deviceCfg->FirstChildElement("PartialResult");
+    if(partialResult == nullptr) {
+        ALOGI("%s: no PartialResult specified", __FUNCTION__);
+    }
+    else {
+        ret.partialResult = std::atoi(partialResult->GetText()); // apple
+    }
+
+    XMLElement* jpegBufSz = deviceCfg->FirstChildElement("JpegBufferSize");
+    if (jpegBufSz == nullptr) {
+        ALOGI("%s: no jpeg buffer size specified", __FUNCTION__);
+    } else {
+        ret.JpegBufSizeWidth = jpegBufSz->IntAttribute("width", /*Default*/ 0); // apple
+        ret.JpegBufSizeHeight = jpegBufSz->IntAttribute("height", /*Default*/ 0);
+    }
+
+    XMLElement* mJpegBufSz = deviceCfg->FirstChildElement("MaxJpegBufferSize");
+    if (jpegBufSz == nullptr) {
+        ALOGI("%s: no max jpeg buffer size specified", __FUNCTION__);
+    } else {
+        ret.maxJpegBufSize = mJpegBufSz->IntAttribute("bytes", /*Default*/ kDefaultJpegBufSize);
+    }
+
+    XMLElement* syncWaitTimeout = deviceCfg->FirstChildElement("KSyncWaitTimeoutMs");
+    if(syncWaitTimeout != nullptr) {
+        ret.syncWaitTimeout = std::atoi(syncWaitTimeout->GetText());
+    }
+
+    XMLElement* maxThumbCodeSz = deviceCfg->FirstChildElement("KSyncWaitTimeoutMs");
+    if(maxThumbCodeSz == nullptr) {
+        ALOGI("%s: no max thumb code size specified", __FUNCTION__);
+    }
+    else {
+        ret.maxThumbCodeSzWidth = maxThumbCodeSz->IntAttribute("width", /*Default*/ 0);
+        ret.maxThumbCodeSzHeight = maxThumbCodeSz->IntAttribute("height", /*Default*/ 0);
+    }
+    // end here
+    XMLElement* fpsList = deviceCfg->FirstChildElement("FpsList");
+    if (fpsList == nullptr) {
+        ALOGI("%s: no fps list specified", __FUNCTION__);
+    } else {
+        if (!updateFpsList(fpsList, ret.fpsLimits)) {
+            return ret;
+        }
+    }
+
+    XMLElement* depth = deviceCfg->FirstChildElement("Depth16Supported");
+    if (depth == nullptr) {
+        ret.depthEnabled = false;
+        ALOGI("%s: depth output is not enabled", __FUNCTION__);
+    } else {
+        ret.depthEnabled = depth->BoolAttribute("enabled", false);
+    }
+
+    if (ret.depthEnabled) {
+        XMLElement* depthFpsList = deviceCfg->FirstChildElement("DepthFpsList");
+        if (depthFpsList == nullptr) {
+            ALOGW("%s: no depth fps list specified", __FUNCTION__);
+        } else {
+            if (!updateFpsList(depthFpsList, ret.depthFpsLimits)) {
+                return ret;
+            }
+        }
+    }
+
+    XMLElement* minStreamSize = deviceCfg->FirstChildElement("MinimumStreamSize");
+    if (minStreamSize == nullptr) {
+        ALOGI("%s: no minimum stream size specified", __FUNCTION__);
+    } else {
+        ret.minStreamSize = {
+                static_cast<int32_t>(minStreamSize->UnsignedAttribute("width", /*Default*/ 0)),
+                static_cast<int32_t>(minStreamSize->UnsignedAttribute("height", /*Default*/ 0))};
+    }
+
+    XMLElement* orientation = deviceCfg->FirstChildElement("Orientation");
+    if (orientation == nullptr) {
+        ALOGI("%s: no sensor orientation specified", __FUNCTION__);
+    } else {
+        ret.orientation = orientation->IntAttribute("degree", /*Default*/ kDefaultOrientation);
+    }
+
+    ALOGI("%s: external camera cfg loaded: maxJpgBufSize %d,"
+          " num video buffers %d, num still buffers %d, orientation %d",
+          __FUNCTION__, ret.maxJpegBufSize, ret.numVideoBuffers, ret.numStillBuffers,
+          ret.orientation);
+    for (const auto& limit : ret.fpsLimits) {
+        ALOGI("%s: fpsLimitList: %dx%d@%f", __FUNCTION__, limit.size.width, limit.size.height,
+              limit.fpsUpperBound);
+    }
+    for (const auto& limit : ret.depthFpsLimits) {
+        ALOGI("%s: depthFpsLimitList: %dx%d@%f", __FUNCTION__, limit.size.width, limit.size.height,
+              limit.fpsUpperBound);
+    }
+    ALOGI("%s: minStreamSize: %dx%d", __FUNCTION__, ret.minStreamSize.width,
+          ret.minStreamSize.height);
+
+    return ret;
+}
+
 bool ExternalCameraConfig::updateFpsList(tinyxml2::XMLElement* fpsList,
                                          std::vector<FpsLimitation>& fpsLimits) {
     using namespace tinyxml2;
@@ -251,19 +444,16 @@ V4L2Frame::~V4L2Frame() {
 }
 
 int V4L2Frame::getData(uint8_t** outData, size_t* dataSize) {
-    ALOGI("%s: Shiva inside getData", __FUNCTION__);
     if(*outData == nullptr) {
-        ALOGI("%s: Shiva outData is null", __FUNCTION__);
+        ALOGV("%s: outData is null", __FUNCTION__);
     }
     
     return map(outData, dataSize);
 }
 
 int V4L2Frame::getRemoteData(uint8_t** outData, size_t* dataSize) {
-    ALOGI("%s: Shiva inside getRemoteData", __FUNCTION__);
     *outData = mData;
     *dataSize = mDataSize;
-    //return map(outData, dataSize);
     return 0;
 }
 
@@ -287,7 +477,7 @@ int V4L2Frame::map(uint8_t** data, size_t* dataSize) {
     }
     *data = mData;
     *dataSize = mDataSize;
-    ALOGE("%s: V4L map FD %d, data %p size %zu", __FUNCTION__, mFd, mData, mDataSize);
+    ALOGV("%s: V4L map FD %d, data %p size %zu", __FUNCTION__, mFd, mData, mDataSize);
     return 0;
 }
 
@@ -353,7 +543,7 @@ int AllocatedFrame::allocate(YCbCrLayout* out) {
     // reading the last row. Effectively, we only need to ensure that the last row of Cr component
     // has width that is an integral multiple of DCTSIZE.
 
-    size_t dataSize = mWidth * mHeight * 3 / 2;  // YUV420
+    size_t dataSize = mWidth * mHeight * 2;  // YUV420
 
     size_t cbWidth = mWidth / 2;
     size_t requiredCbWidth = DCTSIZE * ((cbWidth + DCTSIZE - 1) / DCTSIZE);
@@ -874,7 +1064,7 @@ int AllocatedV4L2Frame::getData(uint8_t** outData, size_t* dataSize) {
 
 
 int AllocatedV4L2Frame::getRemoteData(uint8_t** outData, size_t* dataSize) {
-    ALOGI("%p and %p", outData, dataSize);
+    ALOGV("%p and %p", outData, dataSize);
     return 0;
 }
 

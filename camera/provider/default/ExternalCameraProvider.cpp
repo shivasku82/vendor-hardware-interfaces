@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#define LOG_TAG "Shiva ExtCamPrvdr"
-#define LOG_NDEBUG 0
+#define LOG_TAG "ExtCamPrvdr"
+//#define LOG_NDEBUG 0
 
 #include "ExternalCameraProvider.h"
 
@@ -88,7 +88,6 @@ std::vector<std::string> split(std::string s, std::string delimiter) {
         pos_start = pos_end + delim_len;
         res.push_back (token);
     }
-
     res.push_back (s.substr (pos_start));
     return res;
 }
@@ -295,64 +294,6 @@ bool ExternalCameraProvider::configureCapabilities() {
               __FUNCTION__, codec_type_to_str(camera_info[i].codec_type),
               resolution_to_str(camera_info[i].resolution), camera_info[i].sensorOrientation,
               camera_info[i].facing, camera_id);
-
-        if (val_client_cap[i].validResolution) {
-            // Set Camera capable resolution based on remote client capability info.
-            //setCameraResolution(camera_info[i].resolution);
-        } else {
-            // Set default resolution if receive invalid capability info from client.
-            // Default resolution would be 480p.
-            //setCameraResolution((uint32_t)FrameResolution::k480p);
-            ALOGE(LOG_TAG
-                  "%s: Not received valid resolution, "
-                  "hence selected 480p as default",
-                  __FUNCTION__);
-        }
-        int codecType;
-        if (val_client_cap[i].validCodecType) {
-            // Set codec type based on remote client capability info.
-            codecType = camera_info[i].codec_type;
-        } else {
-            // Set default codec type if receive invalid capability info from client.
-            // Default codec type would be H264.
-            codecType = (uint32_t)VideoCodecType::kH264;
-            ALOGE(LOG_TAG "%s: Not received valid codec type, hence selected H264 as default",
-                  __FUNCTION__);
-        }
-        int sensorOrientation;
-        if (val_client_cap[i].validOrientation) {
-            // Set Camera sensor orientation based on remote client camera orientation.
-            sensorOrientation = camera_info[i].sensorOrientation;
-        } else {
-            // Set default camera sensor orientation if received invalid orientation data from
-            // client. Default sensor orientation would be zero deg and consider as landscape
-            // display.
-            sensorOrientation = (uint32_t)SensorOrientation::ORIENTATION_0;
-            ALOGE(LOG_TAG
-                  "%s: Not received valid sensor orientation, "
-                  "hence selected ORIENTATION_0 as default",
-                  __FUNCTION__);
-        }
-        bool cameraFacing = false;
-        if (val_client_cap[i].validCameraFacing) {
-            // Set camera facing based on client request.
-            if (camera_info[i].facing == (uint32_t)CameraFacing::BACK_FACING)
-                cameraFacing = true;
-            else
-                cameraFacing = false;
-        } else {
-            // Set default camera facing info if received invalid facing info from client.
-            // Default would be back for camera Id '0' and front for camera Id '1'.
-            if (camera_id == 1)
-                cameraFacing = false;
-            else
-                cameraFacing = true;
-            ALOGE(LOG_TAG
-                  "%s: Not received valid camera facing info, "
-                  "hence selected default",
-                  __FUNCTION__);
-        }
-
         // Start updating metadata for one camera, so update the status.
 
         // Wait till complete the metadata update for a camera.
@@ -361,34 +302,7 @@ bool ExternalCameraProvider::configureCapabilities() {
             // 200us sleep for this thread.
             usleep(20000);
         }
-
-        //RemoteCameraConfig conf;
-        //bool isConfigured = false;
-        std::string camFacing = "BACK";
-        if(cameraFacing == false)
-            camFacing = "FRONT";
-#if 0            
-        for (auto c : captureManager->getProviderConfig().mRemoteCameraConfigs) {
-            if (c->facing == camFacing) {
-                ALOGE("Shiva %s camera facing %s", __FUNCTION__, c->facing.c_str());
-                conf = *c;
-                isConfigured = true;
-                break;
-            }
-        }
-
-        if (isConfigured == false) {
-            ALOGE("%s: configuration is not set", __FUNCTION__);
-            continue;
-        }
-      
-        std::string remoteCamId = std::string("/dev/video") + 127;//conf.cameraId;
-        sp<RemoteCameraDevice> pDev = new RemoteCameraDevice(remoteCamId, conf);
-        if (pDev == nullptr) {
-            ALOGI("%s: Memory error: Cannot create a device object.", __FUNCTION__);
-        }
-        pDev->setFd(mClientFd);
-#endif        
+	
         std::string deviceName =
             std::string("device@") + ExternalCameraDevice::kDeviceVersion + "/external/"+ std::string("127");
         mCameraStatusMap[deviceName] = CameraDeviceStatus::PRESENT;
@@ -435,7 +349,7 @@ void *RemoteThreadFun(void *argv)
         addr_vm.svm_port = 1982;
         addr_vm.svm_cid = 3;
         int ret = 0;
-        ALOGE("Shiva connection ");
+        ALOGI("Waiting for connection ");
         int mSocketServerFd = ::socket(AF_VSOCK, SOCK_STREAM, 0);
         if (mSocketServerFd < 0) {
         ALOGV(LOG_TAG " %s:Line:[%d] Fail to construct camera socket with error: [%s]",
@@ -454,10 +368,10 @@ void *RemoteThreadFun(void *argv)
         ALOGV("%s Failed to listen on ", __FUNCTION__);
         return NULL;
         }
-ALOGE("Shiva connection 1");
+
         socklen_t alen = sizeof(struct sockaddr_un);
         threadHandle->mClientFd = ::accept(mSocketServerFd, (struct sockaddr *)&addr_un, &alen);
-        ALOGE("Shiva connection 2");
+        ALOGE("Vsock connected");
         if (threadHandle->mClientFd > 0) {
             status = threadHandle->configureCapabilities();
             if(!status) {
@@ -469,7 +383,7 @@ ALOGE("Shiva connection 1");
     return argv;
 }
 
-ExternalCameraProvider::ExternalCameraProvider() : mCfg(ExternalCameraConfig::loadFromCfg()) {
+ExternalCameraProvider::ExternalCameraProvider() : mCfg(ExternalCameraConfig::loadFromCfg()), mRemoteCfg(ExternalCameraConfig::loadFromRemoteCfg()) {
     mHotPlugThread = std::make_shared<HotplugThread>(this);
     mHotPlugThread->run();
     pthread_create(&thread_id, NULL, RemoteThreadFun, this);
@@ -536,16 +450,15 @@ ndk::ScopedAStatus ExternalCameraProvider::getCameraDeviceInterface(
         return fromStatus(Status::ILLEGAL_ARGUMENT);
     }
 
-    ALOGE("Shiva Constructing external camera device %s enumerate", cameraDevicePath.c_str());
+    ALOGI("Constructing external camera device %s enumerate", cameraDevicePath.c_str());
 
     std::string delimiter = "/";
     std::vector<std::string> camId = split (in_cameraDeviceName, delimiter);
-    ALOGE("Shiva After split complete");
+    
     if(std::stoi(camId[2]) >= 127) {
-        ALOGE("Shiva remote camera ");
         
         std::shared_ptr<RemoteCameraDevice> deviceImpl =
-                ndk::SharedRefBase::make<RemoteCameraDevice>(camId[2], mClientFd, mCfg);
+                ndk::SharedRefBase::make<RemoteCameraDevice>(camId[2], mClientFd, mRemoteCfg);
         if (deviceImpl == nullptr || deviceImpl->isInitFailed()) {
             ALOGE("%s: camera device %s init failed!", __FUNCTION__, cameraDevicePath.c_str());
             *_aidl_return = nullptr;

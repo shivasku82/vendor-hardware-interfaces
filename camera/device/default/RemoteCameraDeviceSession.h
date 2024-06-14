@@ -1,11 +1,17 @@
-/*
- * Copyright (C) 2022 The Android Open Source Project
+/**
+ * @file RemoteCameraDeviceSession.h
+ * @author Shiva Kumara (shiva.kumara.rudrappa@intel.com)
+ * @brief  Implementation of remote camera device session api.
+ * @version 0.1
+ * @date 2024-06-18
+ *
+ * Copyright (c) 2021 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -62,14 +68,13 @@ using ::android::sp;
 
 #define REQUEST_BUFFER_COUNT 4
 
-
 class RemoteCameraDeviceSession : public BnCameraDeviceSession, public OutputThreadInterface {
   public:
     RemoteCameraDeviceSession(const std::shared_ptr<ICameraDeviceCallback>& callback,
                                 const std::vector<SupportedV4L2Format>& sortedFormats,
                                 const CroppingType& croppingType,
                                 const common::V1_0::helper::CameraMetadata& chars,
-                                int vsockFd);
+                                int vsockFd, const ExternalCameraConfig& config);
     ~RemoteCameraDeviceSession() override;
 #if 0
     class StreamThread : public Thread {
@@ -351,7 +356,7 @@ class RemoteCameraDeviceSession : public BnCameraDeviceSession, public OutputThr
 
     mutable Mutex mLock;  // Protect all private members except otherwise noted
     const std::shared_ptr<ICameraDeviceCallback> mCallback;
-    //const ExternalCameraConfig& mCfg;
+    const ExternalCameraConfig& mRemoteCfg;
     const common::V1_0::helper::CameraMetadata mCameraCharacteristics;
     const std::vector<SupportedV4L2Format> mSupportedFormats;
     const CroppingType mCroppingType;
@@ -379,7 +384,6 @@ class RemoteCameraDeviceSession : public BnCameraDeviceSession, public OutputThr
     std::mutex mV4l2BufferLock;                  // protect the buffer count and condition below
     std::condition_variable mV4L2BufferReturned;
     size_t mNumDequeuedV4l2Buffers = 0;
-    uint32_t mMaxV4L2BufferSize = 0;
 
     // Not protected by mLock (but might be used when mLock is locked)
     std::shared_ptr<OutputThread> mOutputThread;

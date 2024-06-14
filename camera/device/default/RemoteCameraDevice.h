@@ -1,11 +1,17 @@
-/*
- * Copyright (C) 2022 The Android Open Source Project
+/**
+ * @file RemoteCameraDevice.h
+ * @author Shiva Kumara (shiva.kumara.rudrappa@intel.com)
+ * @brief  Implementation of remote camera device api.
+ * @version 0.1
+ * @date 2024-06-18
+ *
+ * Copyright (c) 2021 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -78,7 +84,7 @@ class RemoteCameraDevice : public BnCameraDevice {
     virtual std::shared_ptr<RemoteCameraDeviceSession> createSession(
             const std::shared_ptr<ICameraDeviceCallback>&,
             const std::vector<SupportedV4L2Format>& sortedFormats, const CroppingType& croppingType,
-            const common::V1_0::helper::CameraMetadata& chars, int vsockFd);
+            const common::V1_0::helper::CameraMetadata& chars, int vsockFd, const ExternalCameraConfig& config);
 
     bool isInitFailedLocked();
 
@@ -117,7 +123,7 @@ class RemoteCameraDevice : public BnCameraDevice {
                                 std::vector<SupportedV4L2Format>& outFmts);
 
     // Get candidate supported formats list of input cropping type.
-    static std::vector<SupportedV4L2Format> getCandidateSupportedFormatsLocked();
+    std::vector<SupportedV4L2Format> getCandidateSupportedFormatsLocked();
     // Trim supported format list by the cropping type. Also sort output formats by width/height
     static void trimSupportedFormats(CroppingType cropType,
                                      /*inout*/ std::vector<SupportedV4L2Format>* pFmts);
@@ -127,7 +133,7 @@ class RemoteCameraDevice : public BnCameraDevice {
     bool mInitFailed = false;
     std::string mCameraId;
     std::string mDevicePath;
-    const ExternalCameraConfig& mCfg;
+    const ExternalCameraConfig& mRemoteCfg;
     std::vector<SupportedV4L2Format> mSupportedFormats;
     
 

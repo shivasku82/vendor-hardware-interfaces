@@ -68,6 +68,7 @@ class ExternalCameraProvider : public BnCameraProvider {
             bool* _aidl_return) override;
     bool configureCapabilities();
     int mClientFd;
+
   private:
     void addExternalCamera(const char* devName);
     void deviceAdded(const char* devName);
@@ -114,6 +115,7 @@ class ExternalCameraProvider : public BnCameraProvider {
     std::shared_ptr<ICameraProviderCallback> mCallback = nullptr;
     std::unordered_map<std::string, CameraDeviceStatus> mCameraStatusMap;  // camera id -> status
     const ExternalCameraConfig mCfg;
+    const ExternalCameraConfig mRemoteCfg;
     std::shared_ptr<HotplugThread> mHotPlugThread;
 };
 

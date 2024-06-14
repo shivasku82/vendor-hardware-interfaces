@@ -1,11 +1,17 @@
-/*
- * Copyright (C) 2022 The Android Open Source Project
+/**
+ * @file RemoteCameraDeviceSession.cpp
+ * @author Shiva Kumara (shiva.kumara.rudrappa@intel.com)
+ * @brief  Implementation of remote camera device session api.
+ * @version 0.1
+ * @date 2024-06-18
+ *
+ * Copyright (c) 2021 Intel Corporation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
  *
- *      http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,8 +20,8 @@
  * limitations under the License.
  */
 
-#define LOG_TAG "SSK RemoteCamDevSsn"
-#define LOG_NDEBUG 0
+#define LOG_TAG "RemoteCamDevSsn"
+//#define LOG_NDEBUG 0
 #include <log/log.h>
 
 #include "RemoteCameraDeviceSession.h"
@@ -66,12 +72,6 @@ namespace {
 // Size of request/result metadata fast message queue. Change to 0 to always use hwbinder buffer.
 static constexpr size_t kMetadataMsgQueueSize = 1 << 18 /* 256kB */;
 
-//const int kBadFramesAfterStreamOn = 1;  // drop x frames after streamOn to get rid of some initial
-                                        // bad frames. TODO: develop a better bad frame detection
-                                        // method
-//constexpr int MAX_RETRY = 15;  // Allow retry some ioctl failures a few times to account for some
-                               // webcam showing temporarily ioctl failures.
-//constexpr int IOCTL_RETRY_SLEEP_US = 33000;  // 33ms * MAX_RETRY = 0.5 seconds
 
 // Constants for tryLock during dumpstate
 static constexpr int kDumpLockRetries = 50;
@@ -131,7 +131,7 @@ HandleImporter RemoteCameraDeviceSession::sHandleImporter;
 
 void *RemoteDataRecvThreadFun(void *argv)
 {    
-    ALOGI(LOG_TAG " %s: Shiva: Thread is running", __FUNCTION__);
+    ALOGI(LOG_TAG " %s: Thread is running", __FUNCTION__);
     struct pollfd fd;
     int event;
     uint8_t *fBuffer = nullptr;    
@@ -139,7 +139,6 @@ void *RemoteDataRecvThreadFun(void *argv)
     fd.fd = parentHandle->mFd;
     fd.events = POLLIN | POLLHUP;
     while (true) {
-        //std::unique_lock<std::mutex> lock(mStopMutex);
         if (parentHandle->mStopRequest == true) {
             ALOGW("%s: quit thread.", __FUNCTION__);
             break;
@@ -153,10 +152,6 @@ void *RemoteDataRecvThreadFun(void *argv)
             // connnection disconnected => socket is closed at the other end => close the
             // socket.
             ALOGE(LOG_TAG " %s: POLLHUP: Close camera socket connection", __FUNCTION__);
-            //shutdown(threadParam->mClientFd, SHUT_RDWR);
-            //close(threadParam->mClientFd);
-            //threadParam->mClientFd = -1;
-            //handle->reset();
             break;
         } else if (event & POLLIN) {  // preview / record
             // data is available in socket => read data
@@ -168,14 +163,12 @@ void *RemoteDataRecvThreadFun(void *argv)
             size_header = recv(parentHandle->mFd, (char *)&buffer_header, sizeof(camera_header_t), 0);
             if(buffer_header.type == CAMERA_DATA){
                 size_pending = (size_t)buffer_header.size;
-
-                if(size_pending > SIZE_FRAME_MAX) {
-                    ALOGE("Invalid frame size %zu\n",size_pending);
-                    continue;
+                fBuffer = (uint8_t *)malloc(size_pending);
+                if (fBuffer == NULL) {
+                    ALOGE(LOG_TAG "%s: buffer allocation failed: %d ", __FUNCTION__, __LINE__);
                 }
                 while(true) {
                     if(mEnqList.size() == 0) {
-                        ALOGE("Shiva no buffer to fill");
                         if (parentHandle->mStopRequest == true) {
                             ALOGW("%s: quit thread.", __FUNCTION__);
                             return parentHandle;
@@ -186,78 +179,87 @@ void *RemoteDataRecvThreadFun(void *argv)
                     break;
                 }
 
-                //sp<V4L2Frame> frame = mEnqList[0];
                 std::shared_ptr<V4L2Frame> frame = mEnqList[0];
                 mEnqList.erase(mEnqList.begin());
                 size_t inDataSize;
-                //fBuffer = (uint8_t*)malloc(1920 * 1080 * 2);
-                frame->getRemoteData(&fBuffer, &inDataSize);
-                
-                ALOGI("Shiva here:%s value of fBuffer:%p and size %d",__FUNCTION__,(uint8_t*)fBuffer, (int)inDataSize);
-                
+                uint8_t* yuvBuffer;
+                frame->getRemoteData(&yuvBuffer, &inDataSize);
                 while(size_pending > 0){
                     ssize_t size_data = 0;
-                    if(fBuffer == nullptr) {
-                        ALOGI(LOG_TAG "Shiva fBuffer is null");
-                    }
                     size_data = recv(parentHandle->mFd, (char *)fBuffer+size_update, size_pending, 0);
-//                    ALOGI("Shiva size_pending: %d", (int)size_pending);
                     if(size_data < 0){
                         //error handling while in preview
-                        ALOGE(LOG_TAG "Shiva entered into recv error, break to recover");
+                        ALOGE(LOG_TAG "here entered into recv error, break to recover");
                         continue;
                     }
                     size_update += size_data;
                     size_pending -= size_data;
                     if (size_pending <= 0){
 #if 0
-                            FILE *fp_dump = fopen("/data/1.yuv","w+");
-                            if(fp_dump != NULL){
-                            fwrite(fBuffer,3110400,1,fp_dump); 
-                            fclose(fp_dump);
-                            } else {
-                                ALOGE("Shiva fail to open file");
-                            }
+                        FILE *fp_dump = fopen("/data/1.yuv","w+");
+                        if(fp_dump != NULL){
+                        fwrite(fBuffer,3110400,1,fp_dump); 
+                        fclose(fp_dump);
+                        } else {
+                            ALOGE("fail to open file");
+                        }
 #endif
                         ALOGI(LOG_TAG " [I420] %s:  and size %zd fullsize %zd",
                                 __FUNCTION__,  size_data, size_update);
                         size_update = 0;
+                        int res = libyuv::MJPGToI420(
+                        fBuffer, buffer_header.size, static_cast<uint8_t*>(yuvBuffer), DEFAULT_WIDTH,
+                          static_cast<uint8_t*>(yuvBuffer + (DEFAULT_WIDTH * DEFAULT_HEIGHT)), (DEFAULT_WIDTH / 2),
+                          static_cast<uint8_t*>(yuvBuffer + (DEFAULT_WIDTH * DEFAULT_HEIGHT) + ((DEFAULT_WIDTH * DEFAULT_HEIGHT) / 4)), (DEFAULT_WIDTH / 2),
+                          DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_WIDTH, DEFAULT_HEIGHT);
+                        if (res != 0) {
+                            ALOGE("updated fail to convert MJPG to I420 ret %d", res);
+                        }
                         mDeqList.push_back(frame);
+                        free(fBuffer);
                         break;
                     }
                 }
             } else if(buffer_header.type == REQUEST_CAPABILITY){
                 ALOGE("Calling request Capability \n");
-                        /*if(!threadParam->configureCapabilities(true)) {
-                            return NULL;
-                        }*/
             } else {
                 ALOGE("received NOT OK");
-                usleep(330000);
+                //usleep(330000);
             }
         } 
     }
 
     return argv;
 }
+static int w = 0, h = 0;
+static int kSyncWaitTimeoutMs = 0;
+static int defaultWidth = 0, defaultHeight = 0;
+static int lWidth = 0, lHeight = 0;
 RemoteCameraDeviceSession::RemoteCameraDeviceSession(
         const std::shared_ptr<ICameraDeviceCallback>& callback,
         const std::vector<SupportedV4L2Format>& sortedFormats, const CroppingType& croppingType,
         const common::V1_0::helper::CameraMetadata& chars,
-        int vsockFd) : 
+        int vsockFd, const ExternalCameraConfig& config) : 
         mCallback(callback),
+        mRemoteCfg(config),
         mCameraCharacteristics(chars),
         mSupportedFormats(sortedFormats),
         mCroppingType(croppingType),
         mCameraId("/dev/video0"),
         mMaxThumbResolution(getMaxThumbResolution()),
         mMaxJpegResolution(getMaxJpegResolution()) {
-            ALOGI("%s: shiva in RemoteCameraDeviceSession constructor", __FUNCTION__);
-            
-            mFd = vsockFd;
+        ALOGI("%s:  in RemoteCameraDeviceSession constructor", __FUNCTION__);    
+        mFd = vsockFd;
+        w = mRemoteCfg.maxThumbCodeSzWidth;
+        h = mRemoteCfg.maxThumbCodeSzHeight;
+        kSyncWaitTimeoutMs = mRemoteCfg.syncWaitTimeout;
+        defaultWidth = mRemoteCfg.defaultWidth;
+        defaultHeight = mRemoteCfg.defaultHeight;
+        lWidth = mRemoteCfg.frames[2][0];
+        lHeight = mRemoteCfg.frames[2][1];
         pthread_create(&thread_id, NULL, RemoteDataRecvThreadFun, this);
-        }
-
+    }
+    // TODO
 Size RemoteCameraDeviceSession::getMaxThumbResolution() const {
     return getMaxThumbnailResolution(mCameraCharacteristics);
 }
@@ -273,43 +275,8 @@ Size RemoteCameraDeviceSession::getMaxJpegResolution() const {
 }
 
 bool RemoteCameraDeviceSession::initialize() {
-        mEnqList.clear();
-        mDeqList.clear(); 
-
-#if 0    
-    if (mV4l2Fd.get() < 0) {
-        ALOGE("%s: invalid v4l2 device fd %d!", __FUNCTION__, mV4l2Fd.get());
-        return true;
-    }
-
-    struct v4l2_capability capability;
-    int ret = ioctl(mV4l2Fd.get(), VIDIOC_QUERYCAP, &capability);
-    std::string make, model;
-    if (ret < 0) {
-        ALOGW("%s v4l2 QUERYCAP failed", __FUNCTION__);
-        mExifMake = "Generic UVC webcam";
-        mExifModel = "Generic UVC webcam";
-    } else {
-        // capability.card is UTF-8 encoded
-        char card[32];
-        int j = 0;
-        for (int i = 0; i < 32; i++) {
-            if (capability.card[i] < 128) {
-                card[j++] = capability.card[i];
-            }
-            if (capability.card[i] == '\0') {
-                break;
-            }
-        }
-        if (j == 0 || card[j - 1] != '\0') {
-            mExifMake = "Generic UVC webcam";
-            mExifModel = "Generic UVC webcam";
-        } else {
-            mExifMake = card;
-            mExifModel = card;
-        }
-    }
-#endif
+    mEnqList.clear();
+    mDeqList.clear(); 
     initOutputThread();
     if (mOutputThread == nullptr) {
         ALOGE("%s: init OutputThread failed!", __FUNCTION__);
@@ -395,14 +362,12 @@ RemoteCameraDeviceSession::~RemoteCameraDeviceSession() {
         ALOGE("RemoteCameraDeviceSession deleted before close!");
         close(/*callerIsDtor*/ true);
     }
-    /*for (int i = 0; i < kVirtEnqueueCount; i++) {
-        if (mFrames[i] != nullptr) {
-            //mFrames[i]->delData();
-            mFrames[i] = nullptr;
-        } else {
-            ALOGW("%s: mFrames[%d] is nullptr.", __FUNCTION__, i);
-        }
-    }*/
+    for (const auto& frame : mEnqList) {
+        frame->delData();
+    }
+    for (const auto& frame : mDeqList) {
+        frame->delData();
+    }
 }
 
 ScopedAStatus RemoteCameraDeviceSession::constructDefaultRequestSettings(
@@ -730,55 +695,7 @@ Status RemoteCameraDeviceSession::processOneCaptureRequest(const CaptureRequest&
         ALOGE("%s: capture request must have at least one output buffer!", __FUNCTION__);
         return Status::ILLEGAL_ARGUMENT;
     }
-#if 0
-    camera_metadata_entry fpsRange = mLatestReqSetting.find(ANDROID_CONTROL_AE_TARGET_FPS_RANGE);
-    if (fpsRange.count == 2) {
-        double requestFpsMax = fpsRange.data.i32[1];
-        double closestFps = 0.0;
-        double fpsError = 1000.0;
-        bool fpsSupported = false;
-        for (const auto& fr : mV4l2StreamingFmt.frameRates) {
-            double f = fr.getFramesPerSecond();
-            if (std::fabs(requestFpsMax - f) < 1.0) {
-                fpsSupported = true;
-                break;
-            }
-            if (std::fabs(requestFpsMax - f) < fpsError) {
-                fpsError = std::fabs(requestFpsMax - f);
-                closestFps = f;
-            }
-        }
-        if (!fpsSupported) {
-            /* This can happen in a few scenarios:
-             * 1. The application is sending an FPS range not supported by the configured outputs.
-             * 2. The application is sending a valid FPS range for all configured outputs, but
-             *    the selected V4L2 size can only run at slower speed. This should be very rare
-             *    though: for this to happen a sensor needs to support at least 3 different aspect
-             *    ratio outputs, and when (at least) two outputs are both not the main aspect ratio
-             *    of the webcam, a third size that's larger might be picked and runs into this
-             *    issue.
-             */
-            ALOGW("%s: cannot reach fps %d! Will do %f instead", __FUNCTION__, fpsRange.data.i32[1],
-                  closestFps);
-            requestFpsMax = closestFps;
-        }
 
-        if (requestFpsMax != mV4l2StreamingFps) {
-            {
-                std::unique_lock<std::mutex> lk(mV4l2BufferLock);
-                while (mNumDequeuedV4l2Buffers != 0) {
-                    // Wait until pipeline is idle before reconfigure stream
-                    int waitRet = waitForV4L2BufferReturnLocked(lk);
-                    if (waitRet != 0) {
-                        ALOGE("%s: wait for pipeline idle failed!", __FUNCTION__);
-                        return Status::INTERNAL_ERROR;
-                    }
-                }
-            }
-            configureV4l2StreamLocked(mV4l2StreamingFmt, requestFpsMax);
-        }
-    }
-#endif
     status = importRequestLocked(request, allBufPtrs, allFences);
     if (status != Status::OK) {
         return status;
@@ -849,9 +766,7 @@ ScopedAStatus RemoteCameraDeviceSession::switchToOffline(
     CameraOfflineSessionInfo info;
     std::shared_ptr<ICameraOfflineSession> session;
     Status st = switchToOffline(in_streamsToKeep, &msgs, &results, &info, &session);
-
     mCallback->notify(msgs);
-    ALOGI("Shiva in swithchToOffline %s",__FUNCTION__);
     invokeProcessCaptureResultCallback(results, /* tryWriteFmq= */ true);
     freeReleaseFences(results);
 
@@ -1202,211 +1117,35 @@ status_t RemoteCameraDeviceSession::fillCaptureResult(common::V1_0::helper::Came
 int RemoteCameraDeviceSession::configureV4l2StreamLocked(const SupportedV4L2Format& v4l2Fmt,
                                                            double requestFps) {
     ATRACE_CALL();
-#if 0
-    int ret = v4l2StreamOffLocked();
-    if (ret != OK) {
-        ALOGE("%s: stop v4l2 streaming failed: ret %d", __FUNCTION__, ret);
-        return ret;
-    }
-
-    // VIDIOC_S_FMT w/h/fmt
-    v4l2_format fmt;
-    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = v4l2Fmt.width;
-    fmt.fmt.pix.height = v4l2Fmt.height;
-    fmt.fmt.pix.pixelformat = v4l2Fmt.fourcc;
-
-    {
-        int numAttempt = 0;
-        do {
-            ret = TEMP_FAILURE_RETRY(ioctl(mFd, VIDIOC_S_FMT, &fmt));
-            if (numAttempt == MAX_RETRY) {
-                break;
-            }
-            numAttempt++;
-            if (ret < 0) {
-                ALOGW("%s: VIDIOC_S_FMT failed, wait 33ms and try again", __FUNCTION__);
-                usleep(IOCTL_RETRY_SLEEP_US);  // sleep and try again
-            }
-        } while (ret < 0);
-        if (ret < 0) {
-            ALOGE("%s: S_FMT ioctl failed: %s", __FUNCTION__, strerror(errno));
-            return -errno;
-        }
-    }
-
-    if (v4l2Fmt.width != fmt.fmt.pix.width || v4l2Fmt.height != fmt.fmt.pix.height ||
-        v4l2Fmt.fourcc != fmt.fmt.pix.pixelformat) {
-        ALOGE("%s: S_FMT expect %c%c%c%c %dx%d, got %c%c%c%c %dx%d instead!", __FUNCTION__,
-              v4l2Fmt.fourcc & 0xFF, (v4l2Fmt.fourcc >> 8) & 0xFF, (v4l2Fmt.fourcc >> 16) & 0xFF,
-              (v4l2Fmt.fourcc >> 24) & 0xFF, v4l2Fmt.width, v4l2Fmt.height,
-              fmt.fmt.pix.pixelformat & 0xFF, (fmt.fmt.pix.pixelformat >> 8) & 0xFF,
-              (fmt.fmt.pix.pixelformat >> 16) & 0xFF, (fmt.fmt.pix.pixelformat >> 24) & 0xFF,
-              fmt.fmt.pix.width, fmt.fmt.pix.height);
-        return -EINVAL;
-    }
-
-    uint32_t bufferSize = fmt.fmt.pix.sizeimage;
-    ALOGI("%s: V4L2 buffer size is %d", __FUNCTION__, bufferSize);
-    uint32_t expectedMaxBufferSize = kMaxBytesPerPixel * fmt.fmt.pix.width * fmt.fmt.pix.height;
-    if ((bufferSize == 0) || (bufferSize > expectedMaxBufferSize)) {
-        ALOGE("%s: V4L2 buffer size: %u looks invalid. Expected maximum size: %u", __FUNCTION__,
-              bufferSize, expectedMaxBufferSize);
-        return -EINVAL;
-    }
-    mMaxV4L2BufferSize = bufferSize;
-
-    const double kDefaultFps = 30.0;
-    double fps = std::numeric_limits<double>::max();
-    if (requestFps != 0.0) {
-        fps = requestFps;
-    } else {
-        double maxFps = -1.0;
-        // Try to pick the slowest fps that is at least 30
-        for (const auto& fr : v4l2Fmt.frameRates) {
-            double f = fr.getFramesPerSecond();
-            if (maxFps < f) {
-                maxFps = f;
-            }
-            if (f >= kDefaultFps && f < fps) {
-                fps = f;
-            }
-        }
-        // No fps > 30 found, use the highest fps available within supported formats.
-        if (fps == std::numeric_limits<double>::max()) {
-            fps = maxFps;
-        }
-    }
-
-    int fpsRet = setV4l2FpsLocked(fps);
-    if (fpsRet != 0 && fpsRet != -EINVAL) {
-        ALOGE("%s: set fps failed: %s", __FUNCTION__, strerror(fpsRet));
-        return fpsRet;
-    }
-
-    uint32_t v4lBufferCount = (fps >= kDefaultFps) ? mCfg.numVideoBuffers : mCfg.numStillBuffers;
-
-    // VIDIOC_REQBUFS: create buffers
-    v4l2_requestbuffers req_buffers{};
-    req_buffers.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    req_buffers.memory = V4L2_MEMORY_MMAP;
-    req_buffers.count = v4lBufferCount;
-    if (TEMP_FAILURE_RETRY(ioctl(mFd, VIDIOC_REQBUFS, &req_buffers)) < 0) {
-        ALOGE("%s: VIDIOC_REQBUFS failed: %s", __FUNCTION__, strerror(errno));
-        return -errno;
-    }
-
-    // Driver can indeed return more buffer if it needs more to operate
-    if (req_buffers.count < v4lBufferCount) {
-        ALOGE("%s: VIDIOC_REQBUFS expected %d buffers, got %d instead", __FUNCTION__,
-              v4lBufferCount, req_buffers.count);
-        return NO_MEMORY;
-    }
-
-    // VIDIOC_QUERYBUF:  get buffer offset in the V4L2 fd
-    // VIDIOC_QBUF: send buffer to driver
-    mV4L2BufferCount = req_buffers.count;
-    for (uint32_t i = 0; i < req_buffers.count; i++) {
-        v4l2_buffer buffer = {
-                .index = i, .type = V4L2_BUF_TYPE_VIDEO_CAPTURE, .memory = V4L2_MEMORY_MMAP};
-
-        if (TEMP_FAILURE_RETRY(ioctl(mFd, VIDIOC_QUERYBUF, &buffer)) < 0) {
-            ALOGE("%s: QUERYBUF %d failed: %s", __FUNCTION__, i, strerror(errno));
-            return -errno;
-        }
-
-        if (TEMP_FAILURE_RETRY(ioctl(mFd, VIDIOC_QBUF, &buffer)) < 0) {
-            ALOGE("%s: QBUF %d failed: %s", __FUNCTION__, i, strerror(errno));
-            return -errno;
-        }
-    }
-
-    {
-        // VIDIOC_STREAMON: start streaming
-        v4l2_buf_type capture_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        int numAttempt = 0;
-        do {
-            ret = TEMP_FAILURE_RETRY(ioctl(mFd, VIDIOC_STREAMON, &capture_type));
-            if (numAttempt == MAX_RETRY) {
-                break;
-            }
-            if (ret < 0) {
-                ALOGW("%s: VIDIOC_STREAMON failed, wait 33ms and try again", __FUNCTION__);
-                usleep(IOCTL_RETRY_SLEEP_US);  // sleep 100 ms and try again
-            }
-        } while (ret < 0);
-
-        if (ret < 0) {
-            ALOGE("%s: VIDIOC_STREAMON ioctl failed: %s", __FUNCTION__, strerror(errno));
-            return -errno;
-        }
-    }
-
-    // Swallow first few frames after streamOn to account for bad frames from some devices
-    for (int i = 0; i < kBadFramesAfterStreamOn; i++) {
-        v4l2_buffer buffer{};
-        buffer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buffer.memory = V4L2_MEMORY_MMAP;
-        if (TEMP_FAILURE_RETRY(ioctl(mFd, VIDIOC_DQBUF, &buffer)) < 0) {
-            ALOGE("%s: DQBUF fails: %s", __FUNCTION__, strerror(errno));
-            return -errno;
-        }
-        if (TEMP_FAILURE_RETRY(ioctl(mFd, VIDIOC_QBUF, &buffer)) < 0) {
-            ALOGE("%s: QBUF index %d fails: %s", __FUNCTION__, buffer.index, strerror(errno));
-            return -errno;
-        }
-    }
-#else 
-
     // VIDIOC_S_FMT w/h/fmt
     v4l2_format fmt;
     fmt.fmt.pix.width = v4l2Fmt.width;
     fmt.fmt.pix.height = v4l2Fmt.height;
     fmt.fmt.pix.pixelformat = v4l2Fmt.fourcc;
-    // fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 
     ALOGI("%s: [%dx%d]@%d", __FUNCTION__, v4l2Fmt.width, v4l2Fmt.height, v4l2Fmt.fourcc);
     mV4L2BufferCount = REQUEST_BUFFER_COUNT; //should get from QueryBuf
     for (int i = 0; i < kVirtEnqueueCount; i++) {
-        //if (mFrames[i] == nullptr) {
-            std::shared_ptr<V4L2Frame> ptr = std::make_shared<V4L2Frame>(v4l2Fmt.width, v4l2Fmt.height, v4l2Fmt.fourcc, 0, 0, v4l2Fmt.width*v4l2Fmt.height*2, 0);
-            if (ptr!=nullptr && ptr->Data() == nullptr) {
-                //uint8_t* data = new uint8_t[v4l2Fmt.width*v4l2Fmt.height*2];
-                uint8_t* data = new uint8_t[1920 *1080*2];
-                ALOGE("%s: Shiva before setData %d %p", __FUNCTION__, *data, data);
-                ptr->setData(data);
-                //ALOGE("%s: Shiva after setData %d %d", __FUNCTION__, *data, data);
-            }
-            if(ptr == nullptr) {
-                ALOGI("%s: Shiva ptr is null.", __FUNCTION__);
-            }
-            mEnqList.push_back(ptr);
-            /*mFrames[i] = new V4L2Frame(v4l2Fmt.width, v4l2Fmt.height, v4l2Fmt.fourcc, 0, 0, v4l2Fmt.width*v4l2Fmt.height*2, 0);
-            if (mFrames[i] == nullptr) {
-                ALOGE("%s: failed to alloc a v4l2frame.", __FUNCTION__);
-                return -1;
-            }*/
-        //}
-        
+        std::shared_ptr<V4L2Frame> ptr = std::make_shared<V4L2Frame>(v4l2Fmt.width, v4l2Fmt.height, v4l2Fmt.fourcc, 0, 0, v4l2Fmt.width*v4l2Fmt.height*2, 0);
+        if (ptr!=nullptr && ptr->Data() == nullptr) {
+            uint8_t* data = new uint8_t[defaultWidth*defaultHeight*2];
+            ptr->setData(data);
+        }
+        mEnqList.push_back(ptr);        
         ALOGI("%s: enqueue one frame in configuration.", __FUNCTION__);
-        //enqueueV4l2Frame(mFrames[i]);
-        //virtDevice->enqueueFrame(mFrames[i]);
     }
     ALOGI("%s: start V4L2 streaming %dx%d@%ffps", __FUNCTION__, v4l2Fmt.width, v4l2Fmt.height, requestFps);
     mV4l2StreamingFmt = v4l2Fmt;
     mV4l2Streaming = true;
-#endif
     return OK;
 }
 
 std::shared_ptr<V4L2Frame> RemoteCameraDeviceSession::dequeueV4l2FrameLocked(nsecs_t* shutterTs) {
     ATRACE_CALL();
-    //std::unique_ptr<V4L2Frame> ret = nullptr;
     if (shutterTs == nullptr) {
         ALOGE("%s: shutterTs must not be null!", __FUNCTION__);
         return nullptr;
     }
-
     {
         std::unique_lock<std::mutex> lk(mV4l2BufferLock);
         if (mNumDequeuedV4l2Buffers == mV4L2BufferCount) {
@@ -1416,7 +1155,6 @@ std::shared_ptr<V4L2Frame> RemoteCameraDeviceSession::dequeueV4l2FrameLocked(nse
             }
         }
     }
-
     while(true) {
         if(mDeqList.size() == 0) {
             usleep(10000);
@@ -1427,78 +1165,23 @@ std::shared_ptr<V4L2Frame> RemoteCameraDeviceSession::dequeueV4l2FrameLocked(nse
 
    std::shared_ptr<V4L2Frame> frame = mDeqList[0];
    mDeqList.erase(mDeqList.begin());
-   ALOGE("%s:  maximum %u", __FUNCTION__, mMaxV4L2BufferSize);
-#if 0
-    ATRACE_BEGIN("VIDIOC_DQBUF");
-    v4l2_buffer buffer{};
-    buffer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    buffer.memory = V4L2_MEMORY_MMAP;
-    if (TEMP_FAILURE_RETRY(ioctl(mFd, VIDIOC_DQBUF, &buffer)) < 0) {
-        ALOGE("%s: DQBUF fails: %s", __FUNCTION__, strerror(errno));
-        return ret;
-    }
-    ATRACE_END();
-
-    if (buffer.index >= mV4L2BufferCount) {
-        ALOGE("%s: Invalid buffer id: %d", __FUNCTION__, buffer.index);
-        return ret;
-    }
-
-    if (buffer.flags & V4L2_BUF_FLAG_ERROR) {
-        ALOGE("%s: v4l2 buf error! buf flag 0x%x", __FUNCTION__, buffer.flags);
-        // TODO: try to dequeue again
-    }
-
-    if (buffer.bytesused > mMaxV4L2BufferSize) {
-        ALOGE("%s: v4l2 buffer bytes used: %u maximum %u", __FUNCTION__, buffer.bytesused,
-              mMaxV4L2BufferSize);
-        return ret;
-    }
-
-    if (buffer.flags & V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC) {
-        // Ideally we should also check for V4L2_BUF_FLAG_TSTAMP_SRC_SOE, but
-        // even V4L2_BUF_FLAG_TSTAMP_SRC_EOF is better than capture a timestamp now
-        *shutterTs = static_cast<nsecs_t>(buffer.timestamp.tv_sec) * 1000000000LL +
-                     buffer.timestamp.tv_usec * 1000LL;
-    } else {
-        *shutterTs = systemTime(SYSTEM_TIME_MONOTONIC);
-    }
-#endif
+   
     *shutterTs = systemTime(SYSTEM_TIME_MONOTONIC);
     {
         std::lock_guard<std::mutex> lk(mV4l2BufferLock);
         mNumDequeuedV4l2Buffers++;
     }
-
-    /*return std::make_unique<V4L2Frame>(mV4l2StreamingFmt.width, mV4l2StreamingFmt.height,
-                                       mV4l2StreamingFmt.fourcc, buffer.index, mFd,
-                                       buffer.bytesused, buffer.m.offset);*/
     return frame;
 }
 
 void RemoteCameraDeviceSession::enqueueV4l2Frame(const std::shared_ptr<V4L2Frame>& frame) {
     ATRACE_CALL();
-    /*frame->unmap();
-    ATRACE_BEGIN("VIDIOC_QBUF");
-    v4l2_buffer buffer{};
-    buffer.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    buffer.memory = V4L2_MEMORY_MMAP;
-    buffer.index = frame->mBufferIndex;
-    
-
-    if (TEMP_FAILURE_RETRY(ioctl(mFd, VIDIOC_QBUF, &buffer)) < 0) {
-        ALOGE("%s: QBUF index %d fails: %s", __FUNCTION__, frame->mBufferIndex, strerror(errno));
-        return;
-    }*/
-    ALOGE("%s: QBUF index %d ", __FUNCTION__, frame->mBufferIndex);
-    ATRACE_END();
     mEnqList.push_back(frame);
     {
         std::lock_guard<std::mutex> lk(mV4l2BufferLock);
         mNumDequeuedV4l2Buffers--;
     }
     mV4L2BufferReturned.notify_one();
-    ALOGE("%s end ", __FUNCTION__);
 }
 
 bool RemoteCameraDeviceSession::isSupported(
@@ -1647,36 +1330,36 @@ void RemoteCameraDeviceSession::close(bool callerIsDtor) {
         }
         v4l2StreamOffLocked();
         ALOGV("%s: closing V4L2 camera FD %d", __FUNCTION__, mFd);
-        mStopRequest = true;
-        pthread_join(thread_id, NULL);
 
         status_t status = INVALID_OPERATION;
         size_t config_cmd_packet_size = sizeof(camera_header_t) + sizeof(camera_config_cmd_t);
-    camera_config_cmd_t config_cmd = {};
-    config_cmd.version = CAMERA_VHAL_VERSION_2;
-    config_cmd.cmd = camera_cmd_t::CMD_CLOSE;
-    camera_packet_t *config_cmd_packet = NULL;
+        camera_config_cmd_t config_cmd = {};
+        config_cmd.version = CAMERA_VHAL_VERSION_2;
+        config_cmd.cmd = camera_cmd_t::CMD_CLOSE;
+        camera_packet_t *config_cmd_packet = NULL;
 
 
-    config_cmd_packet = (camera_packet_t *)malloc(config_cmd_packet_size);
-    if (config_cmd_packet == NULL) {
-        ALOGE(LOG_TAG "%s: config camera_packet_t allocation failed: %d ", __FUNCTION__, __LINE__);
-        return;
-    }
+        config_cmd_packet = (camera_packet_t *)malloc(config_cmd_packet_size);
+        if (config_cmd_packet == NULL) {
+            ALOGE(LOG_TAG "%s: config camera_packet_t allocation failed: %d ", __FUNCTION__, __LINE__);
+            return;
+        }
 
-    config_cmd_packet->header.type = CAMERA_CONFIG;
-    config_cmd_packet->header.size = sizeof(camera_config_cmd_t);
-    memcpy(config_cmd_packet->payload, &config_cmd, sizeof(camera_config_cmd_t));
+        config_cmd_packet->header.type = CAMERA_CONFIG;
+        config_cmd_packet->header.size = sizeof(camera_config_cmd_t);
+        memcpy(config_cmd_packet->payload, &config_cmd, sizeof(camera_config_cmd_t));
 
-    if (send(mFd, config_cmd_packet, config_cmd_packet_size, 0) < 0) {
-        ALOGE(LOG_TAG "%s: Failed to send Camera %s command to client, err %s ", __FUNCTION__,
+        if (send(mFd, config_cmd_packet, config_cmd_packet_size, 0) < 0) {
+            ALOGE(LOG_TAG "%s: Failed to send Camera %s command to client, err %s ", __FUNCTION__,
               (config_cmd.cmd == camera_cmd_t::CMD_CLOSE) ? "CloseCamera" : "OpenCamera", strerror(errno));
+            free(config_cmd_packet);
+        }
+        status = OK;
         free(config_cmd_packet);
-    }
-    status = OK;
-    free(config_cmd_packet);
 
-        //mV4l2Fd.reset();
+        mStopRequest = true;
+        pthread_join(thread_id, NULL);
+
         mClosed = true;
     }
 }
@@ -1801,42 +1484,35 @@ void RemoteCameraDeviceSession::invokeProcessCaptureResultCallback(
         std::vector<CaptureResult>& results, bool tryWriteFmq) {
     if (mProcessCaptureResultLock.tryLock() != OK) {
         const nsecs_t NS_TO_SECOND = 1000000000;
-        ALOGI("%s: Shiva previous call is not finished! waiting 1s...", __FUNCTION__);
         if (mProcessCaptureResultLock.timedLock(/* 1s */ NS_TO_SECOND) != OK) {
-            ALOGE("%s: Shiva cannot acquire lock in 1s, cannot proceed", __FUNCTION__);
+            ALOGE("%s:  cannot acquire lock in 1s, cannot proceed", __FUNCTION__);
             return;
         }
     }
-    ALOGI("%s: Shiva inside invokeProcessCaptureResultCallback", __FUNCTION__);
+    
     if (tryWriteFmq && mResultMetadataQueue->availableToWrite() > 0) {
-        ALOGI("%s: Shiva inside invokeProcessCaptureResultCallback 1", __FUNCTION__);
         for (CaptureResult& result : results) {
-            ALOGI("%s: Shiva inside invokeProcessCaptureResultCallback 2", __FUNCTION__);
             CameraMetadata& md = result.result;
             if (!md.metadata.empty()) {
                 if (mResultMetadataQueue->write(reinterpret_cast<int8_t*>(md.metadata.data()),
                                                 md.metadata.size())) {
-                    ALOGI("%s: Shiva inside invokeProcessCaptureResultCallback 3", __FUNCTION__);
                     result.fmqResultSize = md.metadata.size();
                     md.metadata.resize(0);
                 } else {
-                    ALOGI("%s: Shiva couldn't utilize fmq, fall back to hwbinder", __FUNCTION__);
+                    ALOGI("%s: couldn't utilize fmq, fall back to hwbinder", __FUNCTION__);
                     result.fmqResultSize = 0;
                 }
             } else {
-                ALOGI("%s: Shiva inside invokeProcessCaptureResultCallback 4", __FUNCTION__);
+                ALOGI("%s: inside invokeProcessCaptureResultCallback 4", __FUNCTION__);
                 result.fmqResultSize = 0;
             }
         }
     }
-    ALOGI("%s: Shiva inside invokeProcessCaptureResultCallback 5", __FUNCTION__);
     auto status = mCallback->processCaptureResult(results);
-    ALOGI("%s: Shiva inside invokeProcessCaptureResultCallback 6", __FUNCTION__);
     if (!status.isOk()) {
-        ALOGI("%s: Shiva processCaptureResult ERROR : %d:%d", __FUNCTION__, status.getExceptionCode(),
+        ALOGI("%s: processCaptureResult ERROR : %d:%d", __FUNCTION__, status.getExceptionCode(),
               status.getServiceSpecificError());
     }
-    ALOGI("%s: Shiva inside invokeProcessCaptureResultCallback 7", __FUNCTION__);
     mProcessCaptureResultLock.unlock();
 }
 
@@ -2008,8 +1684,8 @@ Status RemoteCameraDeviceSession::processCaptureRequestError(
     // Fill output buffers
     CaptureResult result;
     result.frameNumber = req->frameNumber;
-    result.partialResult = 1;
-    result.inputBuffer.streamId = -1;
+    result.partialResult = mRemoteCfg.partialResult; //hello
+    result.inputBuffer.streamId = mRemoteCfg.streamId;
     result.outputBuffers.resize(req->buffers.size());
     for (size_t i = 0; i < req->buffers.size(); i++) {
         result.outputBuffers[i].streamId = req->buffers[i].streamId;
@@ -2032,7 +1708,6 @@ Status RemoteCameraDeviceSession::processCaptureRequestError(
         // Callback into framework
         std::vector<CaptureResult> results(1);
         results[0] = std::move(result);
-        ALOGI("Shiva in processCaptureRequestError %s",__FUNCTION__);
         invokeProcessCaptureResultCallback(results, /* tryWriteFmq */ true);
         freeReleaseFences(results);
     } else {
@@ -2046,7 +1721,6 @@ Status RemoteCameraDeviceSession::processCaptureResult(std::shared_ptr<HalReques
     // Return V4L2 buffer to V4L2 buffer queue
     std::shared_ptr<V4L2Frame> v4l2Frame = std::static_pointer_cast<V4L2Frame>(req->frameIn);
     enqueueV4l2Frame(v4l2Frame);
-ALOGE("Shiva %s 1", __FUNCTION__);
     // NotifyShutter
     notifyShutter(req->frameNumber, req->shutterTs);
 
@@ -2054,43 +1728,35 @@ ALOGE("Shiva %s 1", __FUNCTION__);
     std::vector<CaptureResult> results(1);
     CaptureResult& result = results[0];
     result.frameNumber = req->frameNumber;
-    result.partialResult = 1;
-    result.inputBuffer.streamId = -1;
+    result.partialResult = mRemoteCfg.partialResult; //hello
+    result.inputBuffer.streamId = mRemoteCfg.streamId;
     result.outputBuffers.resize(req->buffers.size());
-    ALOGI("Shiva frameNumber:%d size of req buffers:%d size of result.outBuffers:%d", (int)result.frameNumber, (int)req->buffers.size(), (int)result.outputBuffers.size());
     for (size_t i = 0; i < req->buffers.size(); i++) {
         result.outputBuffers[i].streamId = req->buffers[i].streamId;
         result.outputBuffers[i].bufferId = req->buffers[i].bufferId;
         if (req->buffers[i].fenceTimeout) {
             result.outputBuffers[i].status = BufferStatus::ERROR;
-            ALOGI("Shiva in processControlRequest 1:%d", (int)result.frameNumber);
             if (req->buffers[i].acquireFence >= 0) {
                 native_handle_t* handle = native_handle_create(/*numFds*/ 1, /*numInts*/ 0);
                 handle->data[0] = req->buffers[i].acquireFence;
-                ALOGI("Shiva in processControlRequest 2:%d", (int)result.frameNumber);
                 result.outputBuffers[i].releaseFence = ::android::makeToAidl(handle);
             }
-            ALOGI("Shiva in processControlRequest 3:%d", (int)result.frameNumber);
             notifyError(req->frameNumber, req->buffers[i].streamId, ErrorCode::ERROR_BUFFER);
         } else {
             result.outputBuffers[i].status = BufferStatus::OK;
             // TODO: refactor
-            ALOGI("Shiva in processControlRequest 4:%d", (int)req->buffers[i].acquireFence);
             if (req->buffers[i].acquireFence >= 0) {
                 native_handle_t* handle = native_handle_create(/*numFds*/ 1, /*numInts*/ 0);
                 handle->data[0] = req->buffers[i].acquireFence;
-                ALOGI("Shiva in processControlRequest 5:%d", (int)result.frameNumber);
                 result.outputBuffers[i].releaseFence = ::android::makeToAidl(handle);
             }
         }
     }
-ALOGE("Shiva %s 2", __FUNCTION__);
     // Fill capture result metadata
     fillCaptureResult(req->setting, req->shutterTs);
     const camera_metadata_t* rawResult = req->setting.getAndLock();
     convertToAidl(rawResult, &result.result);
     req->setting.unlock(rawResult);
-ALOGE("Shiva %s 3", __FUNCTION__);
     // update inflight records
     {
         std::lock_guard<std::mutex> lk(mInflightFramesLock);
@@ -2101,13 +1767,13 @@ ALOGE("Shiva %s 3", __FUNCTION__);
     
     invokeProcessCaptureResultCallback(results, /* tryWriteFmq */ true);
     freeReleaseFences(results);
-    ALOGE("Shiva %s end", __FUNCTION__);
     return Status::OK;
 }
 
 ssize_t RemoteCameraDeviceSession::getJpegBufferSize(int32_t width, int32_t height) const {
     // Constant from camera3.h
-    const ssize_t kMinJpegBufferSize = 256 * 1024 + sizeof(CameraBlob);
+    // mRemoteCfg.JpegBufSizeWidth
+    const ssize_t kMinJpegBufferSize = mRemoteCfg.JpegBufSizeWidth * mRemoteCfg.JpegBufSizeHeight + sizeof(CameraBlob); //hello 
     // Get max jpeg size (area-wise).
     if (mMaxJpegResolution.width == 0) {
         ALOGE("%s: No supported JPEG stream", __FUNCTION__);
@@ -2869,7 +2535,7 @@ int RemoteCameraDeviceSession::OutputThread::createJpegLocked(
      * thumbnail can't exceed APP1 size of 64K
      * main image needs to hold APP1, headers, and at most a poorly
      * compressed image */
-    const ssize_t maxThumbCodeSize = 64 * 1024;
+    const ssize_t maxThumbCodeSize = w * h; //;// hello
     const ssize_t maxJpegCodeSize =
             mBlobBufferSize == 0 ? parent->getJpegBufferSize(jpegSize.width, jpegSize.height)
                                  : mBlobBufferSize;
@@ -2980,224 +2646,10 @@ void RemoteCameraDeviceSession::OutputThread::clearIntermediateBuffers() {
 }
 
 bool RemoteCameraDeviceSession::OutputThread::threadLoop() {
-#if 0    
+
     std::shared_ptr<HalRequest> req;
     auto parent = mParent.lock();
-    if (parent == nullptr) {
-        ALOGE("%s: session has been disconnected!", __FUNCTION__);
-        return false;
-    }
 
-    // TODO: maybe we need to setup a sensor thread to dq/enq v4l frames
-    //       regularly to prevent v4l buffer queue filled with stale buffers
-    //       when app doesn't program a preview request
-    waitForNextRequest(&req);
-    if (req == nullptr) {
-        // No new request, wait again
-        return true;
-    }
-
-    auto onDeviceError = [&](auto... args) {
-        ALOGE(args...);
-        parent->notifyError(req->frameNumber, /*stream*/ -1, ErrorCode::ERROR_DEVICE);
-        signalRequestDone();
-        return false;
-    };
-
-    if (req->frameIn->mFourcc != V4L2_PIX_FMT_MJPEG && req->frameIn->mFourcc != V4L2_PIX_FMT_Z16 &&
-        req->frameIn->mFourcc != HAL_PIXEL_FORMAT_YCbCr_420_888) {
-        return onDeviceError("%s: do not support V4L2 format %c%c%c%c", __FUNCTION__,
-                             req->frameIn->mFourcc & 0xFF, (req->frameIn->mFourcc >> 8) & 0xFF,
-                             (req->frameIn->mFourcc >> 16) & 0xFF,
-                             (req->frameIn->mFourcc >> 24) & 0xFF);
-    }
-
-    int res = requestBufferStart(req->buffers);
-    if (res != 0) {
-        ALOGE("%s: send BufferRequest failed! res %d", __FUNCTION__, res);
-        return onDeviceError("%s: failed to send buffer request!", __FUNCTION__);
-    }
-
-    std::unique_lock<std::mutex> lk(mBufferLock);
-    // Convert input V4L2 frame to YU12 of the same size
-    // TODO: see if we can save some computation by converting to YV12 here
-    uint8_t* inData;
-    size_t inDataSize;
-    
-    if (req->frameIn->getRemoteData(&inData, &inDataSize) != 0) {
-        lk.unlock();
-        return onDeviceError("%s: V4L2 buffer map failed", __FUNCTION__);
-    }
-
-    // Process camera mute state
-    auto testPatternMode = req->setting.find(ANDROID_SENSOR_TEST_PATTERN_MODE);
-    if (testPatternMode.count == 1) {
-        if (mCameraMuted != (testPatternMode.data.u8[0] != ANDROID_SENSOR_TEST_PATTERN_MODE_OFF)) {
-            mCameraMuted = !mCameraMuted;
-            // Get solid color for test pattern, if any was set
-            if (testPatternMode.data.u8[0] == ANDROID_SENSOR_TEST_PATTERN_MODE_SOLID_COLOR) {
-                auto entry = req->setting.find(ANDROID_SENSOR_TEST_PATTERN_DATA);
-                if (entry.count == 4) {
-                    // Update the mute frame if the pattern color has changed
-                    if (memcmp(entry.data.i32, mTestPatternData, sizeof(mTestPatternData)) != 0) {
-                        memcpy(mTestPatternData, entry.data.i32, sizeof(mTestPatternData));
-                        // Fill the mute frame with the solid color, use only 8 MSB of RGGB as RGB
-                        for (int i = 0; i < mMuteTestPatternFrame.size(); i += 3) {
-                            mMuteTestPatternFrame[i] = entry.data.i32[0] >> 24;
-                            mMuteTestPatternFrame[i + 1] = entry.data.i32[1] >> 24;
-                            mMuteTestPatternFrame[i + 2] = entry.data.i32[3] >> 24;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // TODO: in some special case maybe we can decode jpg directly to gralloc output?
-    if (req->frameIn->mFourcc == V4L2_PIX_FMT_MJPEG) {
-        ATRACE_BEGIN("MJPGtoI420");
-        res = 0;
-        if (mCameraMuted) {
-            res = libyuv::ConvertToI420(
-                    mMuteTestPatternFrame.data(), mMuteTestPatternFrame.size(),
-                    static_cast<uint8_t*>(mYu12FrameLayout.y), mYu12FrameLayout.yStride,
-                    static_cast<uint8_t*>(mYu12FrameLayout.cb), mYu12FrameLayout.cStride,
-                    static_cast<uint8_t*>(mYu12FrameLayout.cr), mYu12FrameLayout.cStride, 0, 0,
-                    mYu12Frame->mWidth, mYu12Frame->mHeight, mYu12Frame->mWidth,
-                    mYu12Frame->mHeight, libyuv::kRotate0, libyuv::FOURCC_RAW);
-        } else {
-            res = libyuv::MJPGToI420(
-                    inData, inDataSize, static_cast<uint8_t*>(mYu12FrameLayout.y),
-                    mYu12FrameLayout.yStride, static_cast<uint8_t*>(mYu12FrameLayout.cb),
-                    mYu12FrameLayout.cStride, static_cast<uint8_t*>(mYu12FrameLayout.cr),
-                    mYu12FrameLayout.cStride, mYu12Frame->mWidth, mYu12Frame->mHeight,
-                    mYu12Frame->mWidth, mYu12Frame->mHeight);
-        }
-        ATRACE_END();
-
-        if (res != 0) {
-            // For some webcam, the first few V4L2 frames might be malformed...
-            ALOGE("%s: Convert V4L2 frame to YU12 failed! res %d", __FUNCTION__, res);
-            lk.unlock();
-            Status st = parent->processCaptureRequestError(req);
-            if (st != Status::OK) {
-                return onDeviceError("%s: failed to process capture request error!", __FUNCTION__);
-            }
-            signalRequestDone();
-            return true;
-        }
-    }
-
-    ATRACE_BEGIN("Wait for BufferRequest done");
-    res = waitForBufferRequestDone(&req->buffers);
-    ATRACE_END();
-
-    if (res != 0) {
-        ALOGE("%s: wait for BufferRequest done failed! res %d", __FUNCTION__, res);
-        lk.unlock();
-        return onDeviceError("%s: failed to process buffer request error!", __FUNCTION__);
-    }
-
-    ALOGV("%s processing new request", __FUNCTION__);
-    const int kSyncWaitTimeoutMs = 500;
-    for (auto& halBuf : req->buffers) {
-        if (*(halBuf.bufPtr) == nullptr) {
-            ALOGW("%s: buffer for stream %d missing", __FUNCTION__, halBuf.streamId);
-            halBuf.fenceTimeout = true;
-        } else if (halBuf.acquireFence >= 0) {
-            int ret = sync_wait(halBuf.acquireFence, kSyncWaitTimeoutMs);
-            if (ret) {
-                halBuf.fenceTimeout = true;
-            } else {
-                ::close(halBuf.acquireFence);
-                halBuf.acquireFence = -1;
-            }
-        }
-
-        if (halBuf.fenceTimeout) {
-            continue;
-        }
-
-        // Gralloc lockYCbCr the buffer
-        switch (halBuf.format) {
-            case PixelFormat::BLOB: {
-                int ret = createJpegLocked(halBuf, req->setting);
-
-                if (ret != 0) {
-                    lk.unlock();
-                    return onDeviceError("%s: createJpegLocked failed with %d", __FUNCTION__, ret);
-                }
-            } break;
-            case PixelFormat::Y16: {
-                void* outLayout = sHandleImporter.lock(
-                        *(halBuf.bufPtr), static_cast<uint64_t>(halBuf.usage), inDataSize);
-
-                std::memcpy(outLayout, inData, inDataSize);
-
-                int relFence = sHandleImporter.unlock(*(halBuf.bufPtr));
-                if (relFence >= 0) {
-                    halBuf.acquireFence = relFence;
-                }
-            } break;
-            case PixelFormat::YCBCR_420_888:
-            case PixelFormat::YV12: {
-                IMapper::Rect outRect{0, 0, static_cast<int32_t>(halBuf.width),
-                                      static_cast<int32_t>(halBuf.height)};
-                YCbCrLayout outLayout = sHandleImporter.lockYCbCr(
-                        *(halBuf.bufPtr), static_cast<uint64_t>(halBuf.usage), outRect);
-                ALOGV("%s: outLayout y %p cb %p cr %p y_str %d c_str %d c_step %d", __FUNCTION__,
-                      outLayout.y, outLayout.cb, outLayout.cr, outLayout.yStride, outLayout.cStride,
-                      outLayout.chromaStep);
-
-                // Convert to output buffer size/format
-                uint32_t outputFourcc = getFourCcFromLayout(outLayout);
-                ALOGV("%s: converting to format %c%c%c%c", __FUNCTION__, outputFourcc & 0xFF,
-                      (outputFourcc >> 8) & 0xFF, (outputFourcc >> 16) & 0xFF,
-                      (outputFourcc >> 24) & 0xFF);
-
-                YCbCrLayout cropAndScaled;
-                ATRACE_BEGIN("cropAndScaleLocked");
-                int ret = cropAndScaleLocked(mYu12Frame, Size{halBuf.width, halBuf.height},
-                                             &cropAndScaled);
-                ATRACE_END();
-                if (ret != 0) {
-                    lk.unlock();
-                    return onDeviceError("%s: crop and scale failed!", __FUNCTION__);
-                }
-
-                Size sz{halBuf.width, halBuf.height};
-                ATRACE_BEGIN("formatConvert");
-                ret = formatConvert(cropAndScaled, outLayout, sz, outputFourcc);
-                memset(cropAndScaled.y, 0xff, 1920 *1080 * 0.25);
-                ATRACE_END();
-                if (ret != 0) {
-                    lk.unlock();
-                    return onDeviceError("%s: format conversion failed!", __FUNCTION__);
-                }
-                int relFence = sHandleImporter.unlock(*(halBuf.bufPtr));
-                if (relFence >= 0) {
-                    halBuf.acquireFence = relFence;
-                }
-            } break;
-            default:
-                lk.unlock();
-                return onDeviceError("%s: unknown output format %x", __FUNCTION__, halBuf.format);
-        }
-    }  // for each buffer
-    mScaledYu12Frames.clear();
-
-    // Don't hold the lock while calling back to parent
-    lk.unlock();
-    ALOGE("Shiva process Capture Result");
-    Status st = parent->processCaptureResult(req);
-    if (st != Status::OK) {
-        return onDeviceError("%s: failed to process capture result!", __FUNCTION__);
-    }
-    signalRequestDone();
-#else
-    std::shared_ptr<HalRequest> req;
-    auto parent = mParent.lock();
-ALOGE(" %s start ",__FUNCTION__);
     if (parent == nullptr) {
        ALOGE("%s: session has been disconnected!", __FUNCTION__);
        return false;
@@ -3261,67 +2713,29 @@ ALOGE(" %s start ",__FUNCTION__);
     if (inData == nullptr) {
         ALOGE("%s: nullptr of inData.", __FUNCTION__);
     }
-    // TODO: in some special case maybe we can decode jpg directly to gralloc output?
-    if (req->frameIn->mFourcc == V4L2_PIX_FMT_YUYV) {
-        ATRACE_BEGIN("YUYVtoI420");
-        int alignment = 16;
-        int stride = (req->frameIn->mWidth * 2 + alignment - 1) & ~(alignment - 1);
-        int res = libyuv::YUY2ToI420(
-            inData, stride, static_cast<uint8_t*>(mYu12FrameLayout.y), mYu12FrameLayout.yStride,
-            static_cast<uint8_t*>(mYu12FrameLayout.cb), mYu12FrameLayout.cStride,
-            static_cast<uint8_t*>(mYu12FrameLayout.cr), mYu12FrameLayout.cStride,
-            mYu12Frame->mWidth, mYu12Frame->mHeight);
-        ATRACE_END();
-        if (res != 0) {
-            // For some webcam, the first few V4L2 frames might be malformed...
-            ALOGE("%s: Convert V4L2 frame to YU12 failed! res %d", __FUNCTION__, res);
-            lk.unlock();
-            Status st = parent->processCaptureRequestError(req);
-            if (st != Status::OK) {
-                return onDeviceError("%s: failed to process capture request error!", __FUNCTION__);
+    if (req->frameIn->mFourcc == HAL_PIXEL_FORMAT_YCbCr_420_888) {
+        if(mYu12Frame->mWidth == lWidth && mYu12Frame->mHeight == lHeight) { // hello 
+            //scale to dest buffer
+            int srcWidth = defaultWidth;
+            int srcHeight = defaultHeight;
+            auto filtering = libyuv::kFilterNone;
+            uint8_t* dst_buffer = (uint8_t*)mYu12FrameLayout.y;
+            if(int ret = libyuv::I420Scale(inData, srcWidth, inData + (srcWidth * srcHeight), srcWidth /2 ,
+                inData + ((srcWidth * srcHeight) + ((srcWidth * srcHeight) / 4)),
+                srcWidth /2, srcWidth, srcHeight, dst_buffer,
+                mYu12Frame->mWidth, dst_buffer + (mYu12Frame->mWidth * mYu12Frame->mHeight), mYu12Frame->mWidth/2, 
+                dst_buffer + ((mYu12Frame->mWidth * mYu12Frame->mHeight) + ((mYu12Frame->mWidth* mYu12Frame->mHeight)/4)),
+                mYu12Frame->mWidth/2, mYu12Frame->mWidth, mYu12Frame->mWidth, filtering)) {
+                ALOGE("fail to scale frame");
             }
-            signalRequestDone();
-            return true;
+        }else {
+            memcpy(mYu12FrameLayout.y, inData, (mYu12Frame->mWidth * mYu12Frame->mHeight * 1.5));
         }
-    } else if (req->frameIn->mFourcc == V4L2_PIX_FMT_UYVY) {
-        ATRACE_BEGIN("UYVYtoI420");
-        // if (count%29 == 1) {
-        //     ALOGI("UYVYtoI420 with datasize: %d %d", (int32_t)inDataSize, count);
-        //     save_image(inData, inDataSize);
-        // }
-        // count ++;
-        int alignment = 16;
-        int stride = (req->frameIn->mWidth * 2 + alignment - 1) & ~(alignment - 1);
-        int res = libyuv::UYVYToI420(
-            inData, stride,
-            static_cast<uint8_t*>(mYu12FrameLayout.y), mYu12FrameLayout.yStride,
-            static_cast<uint8_t*>(mYu12FrameLayout.cb), mYu12FrameLayout.cStride,
-            static_cast<uint8_t*>(mYu12FrameLayout.cr), mYu12FrameLayout.cStride,
-            mYu12Frame->mWidth, mYu12Frame->mHeight);
-        ATRACE_END();
-
-        if (res != 0) {
-            // For some webcam, the first few V4L2 frames might be malformed...
-            ALOGE("%s: Convert V4L2 frame to YU12 failed! res %d", __FUNCTION__, res);
-            lk.unlock();
-            Status st = parent->processCaptureRequestError(req);
-            if (st != Status::OK) {
-                return onDeviceError("%s: failed to process capture request error!", __FUNCTION__);
-            }
-            signalRequestDone();
-            return true;
-        }
-    } else if (req->frameIn->mFourcc == HAL_PIXEL_FORMAT_YCbCr_420_888) {
-        ATRACE_BEGIN("UYVYtoI420");
-        memcpy(mYu12FrameLayout.y, inData, (mYu12Frame->mWidth * mYu12Frame->mHeight * 1.5));
     }
 
     ATRACE_BEGIN("Wait for BufferRequest done");
     res = waitForBufferRequestDone(&req->buffers);
     ATRACE_END();
-
-ALOGE("%s 1 ",__FUNCTION__);
-    // ALOGI("%s %d: flusing inflight requests", __FUNCTION__, __LINE__);
     if (res != 0) {
         ALOGE("%s: wait for BufferRequest done failed! res %d", __FUNCTION__, res);
         lk.unlock();
@@ -3329,7 +2743,7 @@ ALOGE("%s 1 ",__FUNCTION__);
     }
 
     ALOGV("%s processing new request", __FUNCTION__);
-    const int kSyncWaitTimeoutMs = 500;
+    //const int kSyncWaitTimeoutMs = 500;// hello
     for (auto& halBuf : req->buffers) {
         if (*(halBuf.bufPtr) == nullptr) {
             ALOGW("%s: buffer for stream %d missing", __FUNCTION__, halBuf.streamId);
@@ -3359,17 +2773,6 @@ ALOGE("%s 1 ",__FUNCTION__);
                           __FUNCTION__, ret);
                 }
             } break;
-           /* case PixelFormat::Y16: {
-                ALOGV("%s: y16", __FUNCTION__);
-                void* outLayout = sHandleImporter.lock(*(halBuf.bufPtr), halBuf.usage, inDataSize);
-
-                std::memcpy(outLayout, inData, inDataSize);
-
-                int relFence = sHandleImporter.unlock(*(halBuf.bufPtr));
-                if (relFence >= 0) {
-                    halBuf.acquireFence = relFence;
-                }
-            } break;*/
             case PixelFormat::YCBCR_420_888:
             case PixelFormat::YV12: {
                 IMapper::Rect outRect {0, 0,
@@ -3421,20 +2824,14 @@ ALOGE("%s 1 ",__FUNCTION__);
     } // for each buffer
     mScaledYu12Frames.clear();
 
-ALOGE("%s 2 ",__FUNCTION__);
     // Don't hold the lock while calling back to parent
     lk.unlock();
     Status st = parent->processCaptureResult(req);
     if (st != Status::OK) {
         return onDeviceError("%s: failed to process capture result!", __FUNCTION__);
     }
-
-ALOGE("%s 3 ",__FUNCTION__);
     signalRequestDone();
 
-ALOGE("%s end ",__FUNCTION__);
-
-#endif    
     return true;
 }
 
